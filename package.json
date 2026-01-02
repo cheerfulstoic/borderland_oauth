@@ -11,6 +11,10 @@
   },
   "dependencies": {
     "@openauthjs/openauth": "^0.4.3",
+    "drizzle-kit": "^0.31.8",
+    "drizzle-orm": "^0.45.1",
+    "postgres": "^3.4.7",
+    "resend": "^6.6.0",
     "valibot": "^1.2.0"
   }
 }

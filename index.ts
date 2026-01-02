@@ -1,34 +1,13 @@
 import { issuer, createSubjects, createClient } from "@openauthjs/openauth";
 import { Hono } from "hono";
 import { CodeUI } from "@openauthjs/openauth/ui/code";
+import { Theme } from "@openauthjs/openauth/ui/theme"
 import { CodeProvider } from "@openauthjs/openauth/provider/code";
-import { MemoryStorage } from "@openauthjs/openauth/storage/memory";
+import { DrizzleAuthStorage } from "./drizzle-auth-storage";
 import { object, string, optional } from "valibot"
+import { Resend } from "resend"
 
-const ALLOWED_USERS = [
-  {
-    uuid: "a1b2c3d4-e5f6-4789-a012-bcdef0123456",
-    email: "alice@example.com",
-  },
-  {
-    uuid: "b2c3d4e5-f6a7-4890-b123-cdef01234567",
-    email: "bob@example.com",
-  },
-  {
-    uuid: "c3d4e5f6-a7b8-4901-c234-def012345678",
-    email: "charlie@example.com",
-  },
-  {
-    uuid: "d4e5f6a7-b8c9-4012-d345-ef0123456789",
-    email: "diana@example.com",
-  },
-];
-
-// Lookup user by email
-// TODO: Replace with database lookup
-async function findUserByEmail(email: string): Promise<{ uuid: string; email: string } | null> {
-  return ALLOWED_USERS.find(u => u.email === email) || null;
-}
+const resend = new Resend(process.env.RESEND_API_KEY)
 
 const subjects = createSubjects({
   user: object({
@@ -38,8 +17,17 @@ const subjects = createSubjects({
   }),
 })
 
+const CUSTOM_THEME: Theme = {
+  title: "Authorize with The Borderland",
+  radius: "none",
+  favicon: "/favicon.ico",
+  logo: "/logo.png",
+  // ...
+}
+
 const app = issuer({
-  storage: MemoryStorage(),
+  theme: CUSTOM_THEME,
+  storage: DrizzleAuthStorage(),
   providers: {
     code: CodeProvider(
       CodeUI({
@@ -47,14 +35,31 @@ const app = issuer({
           code_info: "We'll send a pin code to your email"
         },
         sendCode: async (claims, code) => {
-          const user = await findUserByEmail(claims.email);
-          if (!user) {
-            throw new Error("Email not authorized");
+          try {
+            let result = await resend.emails.send({
+              from: process.env.RESEND_FROM_EMAIL,
+              to: claims.email,
+              subject: "Your Borderland authentication code",
+              html: `
+                <h1>Your authentication code</h1>
+                <p>Use this code to complete your login with The Borderland:</p>
+                <h2 style="font-size: 32px; letter-spacing: 8px; font-family: monospace;">${code}</h2>
+                <p>This code will expire in 10 minutes.</p>
+              `
+            });
+
+            if (result.error != null) {
+              throw result.error.message
+            }
+
+            // console.log("=".repeat(50));
+            console.log("📧 Email sent to:", claims.email);
+            // console.log("🔑 Code:", code);
+            // console.log("=".repeat(50));
+          } catch (error) {
+            console.error("Failed to send email with authentication code:", error);
+            throw "Failed to send email with authentication code (please contact tech@theborderland.se)";
           }
-          console.log("=".repeat(50));
-          console.log("📧 Email:", claims.email);
-          console.log("🔑 Code:", code);
-          console.log("=".repeat(50));
         }
       })
     )
@@ -62,14 +67,9 @@ const app = issuer({
   subjects: subjects,
   async success(ctx, value) {
     if (value.provider === "code") {
-      const user = await findUserByEmail(value.claims.email);
-      if (!user) {
-        throw new Error("User not found");
-      }
-
       return ctx.subject("user", {
-        userID: user.uuid,
-        email: user.email,
+        email: value.claims.email,
+        userID: value.claims.email,
         workspaceID: "borderland"
       })
     }
@@ -80,6 +80,10 @@ const app = issuer({
 
 const rootApp = new Hono()
 rootApp.route("/", app as any)
+
+// Serve static files
+rootApp.get("/favicon.ico", () => new Response(Bun.file("assets/favicons/favicon.ico")));
+rootApp.get("/logo.png", () => new Response(Bun.file("assets/logo.png")));
 
 // Create a client for verifying tokens
 const client = createClient({
@@ -108,9 +112,9 @@ rootApp.get("/user", async (c) => {
     // Return user information in standard OIDC userinfo format
     // The 'sub' claim is required by OAuth2/OIDC
     return c.json({
-      sub: verified.subject.properties.userID,
+      sub: verified.subject.properties.email,
       email: verified.subject.properties.email,
-      userID: verified.subject.properties.userID,
+      userID: verified.subject.properties.email,
       workspaceID: verified.subject.properties.workspaceID,
     });
   } catch (error) {
