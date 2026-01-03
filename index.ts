@@ -69,7 +69,7 @@ const app = issuer({
     if (value.provider === "code") {
       return ctx.subject("user", {
         email: value.claims.email,
-        userID: value.claims.email,
+        userID: value.claims.email.toLowerCase(),
         workspaceID: "borderland"
       })
     }
@@ -114,7 +114,7 @@ rootApp.get("/user", async (c) => {
     return c.json({
       sub: verified.subject.properties.email,
       email: verified.subject.properties.email,
-      userID: verified.subject.properties.email,
+      userID: verified.subject.properties.email.toLowerCase(),
       workspaceID: verified.subject.properties.workspaceID,
     });
   } catch (error) {
